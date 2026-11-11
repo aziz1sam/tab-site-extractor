@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>فاصل التبويبات حسب الموقع</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-head">
+        <h1 class="app-title">فاصل التبويبات</h1>
+        <span id="summaryText" class="summary-text">جاري الفحص...</span>
+      </div>
+
+      <div class="controls-strip">
+        <div class="segmented" role="group" aria-label="نطاق التبويبات">
+          <button type="button" class="seg-btn is-active" data-scope="current" aria-pressed="true">
+            النافذة الحالية
+          </button>
+          <button type="button" class="seg-btn" data-scope="all" aria-pressed="false">
+            جميع النوافذ
+          </button>
+        </div>
+
+        <div class="segmented" role="group" aria-label="طريقة التجميع">
+          <button type="button" class="seg-btn is-active" data-grouping="main" aria-pressed="true">
+            الموقع الرئيسي
+          </button>
+          <button type="button" class="seg-btn" data-grouping="subdomain" aria-pressed="false">
+            النطاق الفرعي
+          </button>
+        </div>
+      </div>
+
+      <div class="search-row">
+        <div class="search-field">
+          <svg class="search-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="9" cy="9" r="5.75" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M13.5 13.5L17 17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <input
+            id="searchInput"
+            class="search-input"
+            type="search"
+            placeholder="ابحث باسم الموقع أو عنوان التبويب..."
+            autocomplete="off"
+            aria-label="البحث عن موقع أو تبويب"
+          >
+          <button
+            id="clearSearchBtn"
+            type="button"
+            class="clear-search-btn"
+            aria-label="مسح البحث"
+            hidden
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4.5 4.5L11.5 11.5M11.5 4.5L4.5 11.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        <button id="selectAllBtn" type="button" class="bulk-btn">
+          تحديد الكل
+        </button>
+      </div>
+    </header>
+
+    <div class="split-meter" aria-hidden="true">
+      <div id="splitMeterFill" class="split-meter-fill"></div>
+    </div>
+
+    <div id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></div>
+
+    <main id="siteListContainer" class="ledger-wrap">
+      <ul id="siteList" class="site-list" aria-label="قائمة المواقع المفتوحة"></ul>
+
+      <div id="emptyState" class="empty-state" hidden>
+        <p id="emptyMessage" class="empty-message"></p>
+        <button id="emptyActionBtn" type="button" class="empty-action-btn" hidden>
+          مسح البحث
+        </button>
+      </div>
+    </main>
+
+    <footer class="action-bar">
+      <div id="windowWarning" class="window-warning" role="alert" hidden></div>
+
+      <div class="action-buttons">
+        <button id="extractBtn" type="button" class="btn-extract" disabled>
+          استخراج في نافذة جديدة (0)
+        </button>
+        <button id="closeTabsBtn" type="button" class="btn-close-tabs" disabled>
+          إغلاق المحدد (0)
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="domain-utils.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
