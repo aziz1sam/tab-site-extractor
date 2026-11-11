@@ -3,15 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>فاصل التبويبات حسب الموقع</title>
+  <title>مستخرج المواقع</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <div class="topbar-head">
-        <h1 class="app-title">فاصل التبويبات</h1>
-        <span id="summaryText" class="summary-text">جاري الفحص...</span>
+        <div class="title-group">
+          <h1 class="app-title">مستخرج المواقع</h1>
+          <span id="summaryText" class="summary-text">جاري الفحص...</span>
+        </div>
+
+        <div class="segmented segmented-compact" role="group" aria-label="طريقة العرض">
+          <button type="button" class="seg-btn is-active" data-view="list" aria-pressed="true">
+            قائمة
+          </button>
+          <button type="button" class="seg-btn" data-view="tiles" aria-pressed="false">
+            بلاطات
+          </button>
+        </div>
       </div>
 
       <div class="controls-strip">
@@ -26,7 +37,7 @@
 
         <div class="segmented" role="group" aria-label="طريقة التجميع">
           <button type="button" class="seg-btn is-active" data-grouping="main" aria-pressed="true">
-            الموقع الرئيسي
+            النطاق الرئيسي
           </button>
           <button type="button" class="seg-btn" data-grouping="subdomain" aria-pressed="false">
             النطاق الفرعي
@@ -44,9 +55,9 @@
             id="searchInput"
             class="search-input"
             type="search"
-            placeholder="ابحث باسم الموقع أو عنوان التبويب..."
+            placeholder="ابحث عن موقع أو عنوان"
             autocomplete="off"
-            aria-label="البحث عن موقع أو تبويب"
+            aria-label="ابحث عن موقع أو عنوان"
           >
           <button
             id="clearSearchBtn"
@@ -67,10 +78,6 @@
       </div>
     </header>
 
-    <div class="split-meter" aria-hidden="true">
-      <div id="splitMeterFill" class="split-meter-fill"></div>
-    </div>
-
     <div id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></div>
 
     <main id="siteListContainer" class="ledger-wrap">
@@ -84,6 +91,14 @@
       </div>
     </main>
 
+    <section id="previewStrip" class="preview-strip" aria-label="معاينة النافذة الجديدة" hidden>
+      <div class="preview-head">
+        <span class="preview-title">معاينة النافذة الجديدة</span>
+        <span id="previewMeta" class="preview-meta"></span>
+      </div>
+      <div id="previewTabs" class="preview-tabs" role="list"></div>
+    </section>
+
     <footer class="action-bar">
       <div id="windowWarning" class="window-warning" role="alert" hidden></div>
 
@@ -94,6 +109,11 @@
         <button id="closeTabsBtn" type="button" class="btn-close-tabs" disabled>
           إغلاق المحدد (0)
         </button>
+      </div>
+
+      <div class="shortcuts-bar" aria-hidden="true">
+        <span><kbd class="kbd">Enter</kbd> استخراج</span>
+        <span><kbd class="kbd">Del</kbd> إغلاق المحدد</span>
       </div>
     </footer>
   </div>
