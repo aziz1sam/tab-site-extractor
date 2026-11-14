@@ -9,8 +9,29 @@
   const STORAGE_KEYS = {
     scope: 'preferredScope',
     grouping: 'preferredGrouping',
-    view: 'preferredView'
+    view: 'preferredView',
+    features: 'enabledFeatures'
   };
+
+  const DEFAULT_FEATURES = {
+    quickFilters: true,
+    windowTargetAndMerge: true,
+    tabGroups: true,
+    hibernateTabs: true,
+    copyTools: true,
+    livePreview: true
+  };
+
+  const TAB_GROUP_COLORS = [
+    'blue',
+    'cyan',
+    'green',
+    'purple',
+    'orange',
+    'red',
+    'yellow',
+    'pink'
+  ];
 
   const CLOSE_CONFIRM_TIMEOUT_MS = 4000;
 
@@ -26,12 +47,16 @@
   ];
 
   const state = {
-    scope: 'current',       // 'current' | 'all'
-    grouping: 'main',       // 'main' | 'subdomain'
-    view: 'list',           // 'list' | 'tiles'
+    scope: 'current',
+    grouping: 'main',
+    view: 'list',
+    features: { ...DEFAULT_FEATURES },
+    settingsOpen: false,
     searchQuery: '',
-    activeFilters: new Set(), // 'pinned' | 'audible' | 'duplicated'
+    activeFilters: new Set(),
+    targetWindow: 'new', // 'new' or stringified windowId
     rawTabs: [],
+    allWindowsTabs: [],
     groups: [],
     currentWindowId: null,
     windowCount: 1,
@@ -46,12 +71,18 @@
 
   const els = {
     summaryText: document.getElementById('summaryText'),
+    settingsBtn: document.getElementById('settingsBtn'),
+    settingsPanel: document.getElementById('settingsPanel'),
+    featureCheckboxes: Array.from(document.querySelectorAll('[data-feature]')),
     searchInput: document.getElementById('searchInput'),
     clearSearchBtn: document.getElementById('clearSearchBtn'),
     selectAllBtn: document.getElementById('selectAllBtn'),
+    filterPillsRow: document.getElementById('filterPillsRow'),
     countPinned: document.getElementById('countPinned'),
     countAudible: document.getElementById('countAudible'),
     countDuplicated: document.getElementById('countDuplicated'),
+    cleanDuplicatesBtn: document.getElementById('cleanDuplicatesBtn'),
+    countDuplicateCopies: document.getElementById('countDuplicateCopies'),
     statusBanner: document.getElementById('statusBanner'),
     siteListContainer: document.getElementById('siteListContainer'),
     siteList: document.getElementById('siteList'),
@@ -62,8 +93,13 @@
     previewMeta: document.getElementById('previewMeta'),
     previewTabs: document.getElementById('previewTabs'),
     windowWarning: document.getElementById('windowWarning'),
+    windowTargetRow: document.getElementById('windowTargetRow'),
+    targetWindowSelect: document.getElementById('targetWindowSelect'),
+    mergeWindowsBtn: document.getElementById('mergeWindowsBtn'),
     extractBtn: document.getElementById('extractBtn'),
     closeTabsBtn: document.getElementById('closeTabsBtn'),
+    groupTabsBtn: document.getElementById('groupTabsBtn'),
+    hibernateTabsBtn: document.getElementById('hibernateTabsBtn'),
     copyUrlsBtn: document.getElementById('copyUrlsBtn'),
     copyMarkdownBtn: document.getElementById('copyMarkdownBtn'),
     viewButtons: Array.from(document.querySelectorAll('[data-view]')),
@@ -182,12 +218,10 @@
     return svg;
   }
 
-  /**
-   * Parse search query tokens (e.g., is:pinned, is:audible, is:duplicated)
-   * and merge with active filter pills.
-   */
   function parseSearchAndFilters() {
-    const requiredFilters = new Set(state.activeFilters);
+    const requiredFilters = new Set(
+      state.features.quickFilters ? state.activeFilters : []
+    );
     const rawTokens = state.searchQuery.trim().split(/\s+/).filter(Boolean);
     const textTokens = [];
 
@@ -302,21 +336,82 @@
     let pinned = 0;
     let audible = 0;
     let duplicated = 0;
+    let duplicateCopies = 0;
 
     for (const group of state.groups) {
       for (const tab of group.tabs) {
         if (tab.pinned) pinned += 1;
         if (tab.audible || tab.muted) audible += 1;
         if (tab.isDuplicate) duplicated += 1;
+        if (tab.isDuplicateCopy) duplicateCopies += 1;
       }
     }
 
     if (els.countPinned) els.countPinned.textContent = String(pinned);
     if (els.countAudible) els.countAudible.textContent = String(audible);
     if (els.countDuplicated) els.countDuplicated.textContent = String(duplicated);
+    if (els.countDuplicateCopies) {
+      els.countDuplicateCopies.textContent = String(duplicateCopies);
+    }
+    if (els.cleanDuplicatesBtn) {
+      els.cleanDuplicatesBtn.hidden =
+        !state.features.quickFilters || duplicateCopies === 0;
+    }
+  }
+
+  function syncTargetWindowSelect() {
+    if (!els.targetWindowSelect) return;
+    const prevValue = state.targetWindow;
+    els.targetWindowSelect.textContent = '';
+
+    const newOpt = document.createElement('option');
+    newOpt.value = 'new';
+    newOpt.textContent = 'نافذة جديدة مستقلة';
+    els.targetWindowSelect.appendChild(newOpt);
+
+    for (const [wid, winNum] of state.windowNumberMap.entries()) {
+      const count = state.windowTotalCounts.get(wid) || 0;
+      const isCurrent = wid === state.currentWindowId;
+      const opt = document.createElement('option');
+      opt.value = String(wid);
+      opt.textContent = isCurrent
+        ? `النافذة الحالية (نافذة ${winNum} — ${count} تبويب)`
+        : `نافذة ${winNum} (${count} تبويب)`;
+      els.targetWindowSelect.appendChild(opt);
+    }
+
+    const exists = Array.from(els.targetWindowSelect.options).some(
+      (o) => o.value === prevValue
+    );
+    state.targetWindow = exists ? prevValue : 'new';
+    els.targetWindowSelect.value = state.targetWindow;
+
+    if (els.mergeWindowsBtn) {
+      els.mergeWindowsBtn.hidden =
+        !state.features.windowTargetAndMerge || state.windowCount <= 1;
+    }
+  }
+
+  function syncFeatureVisibility() {
+    els.settingsBtn.setAttribute('aria-expanded', String(state.settingsOpen));
+    els.settingsPanel.hidden = !state.settingsOpen;
+
+    for (const chk of els.featureCheckboxes) {
+      const fKey = chk.dataset.feature;
+      chk.checked = Boolean(state.features[fKey]);
+    }
+
+    els.filterPillsRow.hidden = !state.features.quickFilters;
+    els.windowTargetRow.hidden = !state.features.windowTargetAndMerge;
+    els.groupTabsBtn.hidden = !state.features.tabGroups;
+    els.hibernateTabsBtn.hidden = !state.features.hibernateTabs;
+    els.copyUrlsBtn.hidden = !state.features.copyTools;
+    els.copyMarkdownBtn.hidden = !state.features.copyTools;
   }
 
   function syncHeaderControls() {
+    syncFeatureVisibility();
+
     for (const btn of els.viewButtons) {
       const active = btn.dataset.view === state.view;
       btn.classList.toggle('is-active', active);
@@ -340,10 +435,11 @@
     }
     els.clearSearchBtn.hidden = state.searchQuery.length === 0;
     updateFilterPillCounts();
+    syncTargetWindowSelect();
   }
 
   function renderPreviewStrip(effectiveTabs) {
-    if (effectiveTabs.length === 0) {
+    if (!state.features.livePreview || effectiveTabs.length === 0) {
       els.previewStrip.hidden = true;
       els.previewTabs.textContent = '';
       els.previewMeta.textContent = '';
@@ -396,6 +492,18 @@
     els.previewTabs.appendChild(fragment);
   }
 
+  function getExtractButtonLabel(effectiveCount) {
+    if (
+      state.features.windowTargetAndMerge &&
+      state.targetWindow !== 'new'
+    ) {
+      const wid = Number(state.targetWindow);
+      const winNum = state.windowNumberMap.get(wid) || '';
+      return `نقل إلى نافذة ${winNum} (${effectiveCount})`;
+    }
+    return `استخراج في نافذة جديدة (${effectiveCount})`;
+  }
+
   function updateSummaryPreviewAndFooter(visibleEntries) {
     const totalSites = state.groups.length;
     const totalTabs = state.groups.reduce((sum, g) => sum + g.tabs.length, 0);
@@ -421,10 +529,12 @@
     if (effectiveCount === 0) {
       cancelCloseConfirmation();
       els.extractBtn.disabled = true;
-      els.extractBtn.textContent = 'استخراج في نافذة جديدة (0)';
+      els.extractBtn.textContent = getExtractButtonLabel(0);
       els.closeTabsBtn.disabled = true;
       els.closeTabsBtn.classList.remove('is-confirming');
       els.closeTabsBtn.textContent = 'إغلاق المحدد (0)';
+      els.groupTabsBtn.disabled = true;
+      els.hibernateTabsBtn.disabled = true;
       els.copyUrlsBtn.disabled = true;
       els.copyMarkdownBtn.disabled = true;
       els.windowWarning.hidden = true;
@@ -433,8 +543,10 @@
     }
 
     els.extractBtn.disabled = state.busy;
-    els.extractBtn.textContent = `استخراج في نافذة جديدة (${effectiveCount})`;
+    els.extractBtn.textContent = getExtractButtonLabel(effectiveCount);
     els.closeTabsBtn.disabled = state.busy;
+    els.groupTabsBtn.disabled = state.busy;
+    els.hibernateTabsBtn.disabled = state.busy;
     els.copyUrlsBtn.disabled = state.busy;
     els.copyMarkdownBtn.disabled = state.busy;
 
@@ -477,8 +589,192 @@
   }
 
   /**
-   * Feature 3A: Jump directly to a tab and focus its window
+   * Feature 5 (Smart One-Click Clean Duplicates):
+   * Selects ONLY excess duplicate copies (isDuplicateCopy === true) and leaves original intact.
    */
+  function selectOnlyDuplicateCopies() {
+    cancelCloseConfirmation();
+    state.selectedTabIds.clear();
+
+    let count = 0;
+    for (const group of state.groups) {
+      for (const tab of group.tabs) {
+        if (tab.isDuplicateCopy) {
+          state.selectedTabIds.add(tab.id);
+          state.expandedGroupKeys.add(group.key);
+          count += 1;
+        }
+      }
+    }
+
+    if (count === 0) {
+      showStatus('لا توجد نسخ مكررة زائدة لتحديدها.', false);
+      renderList();
+      return;
+    }
+
+    state.activeFilters.add('duplicated');
+    renderList();
+    showStatus(
+      `تم تحديد ${formatTabCount(count, 'accusative')} من النسخ المكررة الزائدة فقط (تُركت النسخة الأصلية سليمة). اضغط Del للإغلاق.`,
+      false
+    );
+  }
+
+  /**
+   * Feature 3 (Chrome Native Tab Groups):
+   * Groups selected tabs by site domain inside their respective window with a distinct color.
+   */
+  async function groupSelectedTabsInPlace() {
+    if (state.busy) return;
+    const visibleEntries = getVisibleEntries();
+    const effectiveTabs = getEffectiveSelectedTabs(visibleEntries);
+    if (effectiveTabs.length === 0) return;
+
+    cancelCloseConfirmation();
+    state.busy = true;
+    updateSummaryPreviewAndFooter(visibleEntries);
+
+    try {
+      // Group by (windowId + groupKey) so tabs from each site become a neat colored Chrome Tab Group
+      const buckets = new Map();
+      for (const tab of effectiveTabs) {
+        if (tab.pinned) continue; // Chrome does not allow pinned tabs inside Tab Groups
+        const bKey = `${tab.windowId}::${tab.groupKey}`;
+        if (!buckets.has(bKey)) {
+          buckets.set(bKey, {
+            windowId: tab.windowId,
+            title: tab.groupDisplayName,
+            tabIds: []
+          });
+        }
+        buckets.get(bKey).tabIds.push(tab.id);
+      }
+
+      if (buckets.size === 0) {
+        showStatus('التبويبات المثبتة لا يمكن وضعها داخل مجموعات كروم.', true);
+        return;
+      }
+
+      let colorIdx = 0;
+      let groupedTabsCount = 0;
+
+      for (const bucket of buckets.values()) {
+        try {
+          const groupId = await chrome.tabs.group({
+            tabIds: bucket.tabIds,
+            createProperties: { windowId: bucket.windowId }
+          });
+          if (chrome.tabGroups && typeof chrome.tabGroups.update === 'function') {
+            const color = TAB_GROUP_COLORS[colorIdx % TAB_GROUP_COLORS.length];
+            colorIdx += 1;
+            await chrome.tabGroups.update(groupId, {
+              title: bucket.title,
+              color
+            });
+          }
+          groupedTabsCount += bucket.tabIds.length;
+        } catch {
+          // Continue with remaining buckets
+        }
+      }
+
+      await scanTabs();
+      showStatus(
+        `تم تجميع ${formatTabCount(groupedTabsCount, 'accusative')} في مجموعات ملونة داخل النافذة.`,
+        false
+      );
+    } catch {
+      showStatus('تعذر إنشاء مجموعات التبويبات.', true);
+    } finally {
+      state.busy = false;
+      updateSummaryPreviewAndFooter(getVisibleEntries());
+    }
+  }
+
+  /**
+   * Feature 2 (Hibernate / Discard Selected Tabs):
+   * Frees memory of selected tabs using chrome.tabs.discard(tabId)
+   */
+  async function hibernateSelectedTabs() {
+    if (state.busy) return;
+    const visibleEntries = getVisibleEntries();
+    const effectiveTabs = getEffectiveSelectedTabs(visibleEntries);
+    if (effectiveTabs.length === 0) return;
+
+    cancelCloseConfirmation();
+    state.busy = true;
+    updateSummaryPreviewAndFooter(visibleEntries);
+
+    let discardedCount = 0;
+    let skippedActiveOrDiscarded = 0;
+
+    try {
+      for (const tab of effectiveTabs) {
+        if (tab.discarded || tab.active) {
+          skippedActiveOrDiscarded += 1;
+          continue;
+        }
+        try {
+          const res = await chrome.tabs.discard(tab.id);
+          if (res) discardedCount += 1;
+        } catch {
+          skippedActiveOrDiscarded += 1;
+        }
+      }
+
+      await scanTabs();
+      if (discardedCount > 0) {
+        showStatus(
+          `تم تجميد وتحرير ذاكرة ${formatTabCount(discardedCount, 'accusative')} بنجاح ❄️.`,
+          false
+        );
+      } else {
+        showStatus(
+          skippedActiveOrDiscarded > 0
+            ? 'التبويبات المحددة إما مجمّدة مسبقاً أو نشطة حالياً في المتصفح.'
+            : 'تعذر تجميد التبويبات المحددة.',
+          false
+        );
+      }
+    } finally {
+      state.busy = false;
+      updateSummaryPreviewAndFooter(getVisibleEntries());
+    }
+  }
+
+  /**
+   * Feature 1B (Merge All Open Windows into Current Window)
+   */
+  async function mergeOpenWindows() {
+    if (state.busy || typeof state.currentWindowId !== 'number') return;
+    cancelCloseConfirmation();
+    state.busy = true;
+    showStatus('');
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'MERGE_WINDOWS',
+        targetWindowId: state.currentWindowId
+      });
+
+      if (response && response.ok) {
+        await scanTabs();
+        showStatus(
+          `تم دمج ونقل ${formatTabCount(response.moved, 'accusative')} إلى النافذة الحالية.`,
+          false
+        );
+      } else if (response && response.error) {
+        showStatus(response.error, true);
+      }
+    } catch {
+      showStatus('حدث خطأ أثناء دمج النوافذ.', true);
+    } finally {
+      state.busy = false;
+      updateSummaryPreviewAndFooter(getVisibleEntries());
+    }
+  }
+
   async function jumpToTab(tab) {
     try {
       await chrome.tabs.update(tab.id, { active: true });
@@ -491,9 +787,6 @@
     }
   }
 
-  /**
-   * Feature 3B: Mute / Unmute an audible tab directly from the drawer
-   */
   async function toggleMuteTab(tab) {
     try {
       const nextMuted = !tab.muted;
@@ -505,9 +798,6 @@
     }
   }
 
-  /**
-   * Feature 5: Copy selected URLs as Plain Text or Markdown
-   */
   async function copySelectedTabs(format) {
     const visibleEntries = getVisibleEntries();
     const effectiveTabs = getEffectiveSelectedTabs(visibleEntries);
@@ -767,7 +1057,7 @@
 
           tabLabel.append(tabChk, titleSpan);
 
-          if (tab.pinned || tab.isDuplicate || state.scope === 'all') {
+          if (tab.pinned || tab.discarded || tab.isDuplicate || state.scope === 'all') {
             const tags = document.createElement('span');
             tags.className = 'tab-tags';
 
@@ -778,10 +1068,17 @@
               tags.appendChild(pinTag);
             }
 
+            if (tab.discarded) {
+              const discTag = document.createElement('span');
+              discTag.className = 'tab-tag';
+              discTag.textContent = '❄️ خامل';
+              tags.appendChild(discTag);
+            }
+
             if (tab.isDuplicate) {
               const dupTag = document.createElement('span');
-              dupTag.className = 'tab-tag';
-              dupTag.textContent = 'مكرر';
+              dupTag.className = tab.isDuplicateCopy ? 'tab-tag is-accent' : 'tab-tag';
+              dupTag.textContent = tab.isDuplicateCopy ? 'نسخة زائدة' : 'أصلي';
               tags.appendChild(dupTag);
             }
 
@@ -806,7 +1103,6 @@
             }
           }
 
-          // Quick Actions container (Audio Mute/Unmute + Instant Jump)
           const actionsWrap = document.createElement('div');
           actionsWrap.className = 'tab-quick-actions';
 
@@ -936,17 +1232,13 @@
       }
       state.currentWindowId = currentWinId;
 
-      const queryFilter =
-        state.scope === 'current'
-          ? { currentWindow: true }
-          : { windowType: 'normal' };
-
-      const tabs = await chrome.tabs.query(queryFilter);
-      state.rawTabs = Array.isArray(tabs) ? tabs : [];
+      // Always query all normal windows to populate the target window selector & merge button
+      const allNormalTabs = await chrome.tabs.query({ windowType: 'normal' });
+      state.allWindowsTabs = Array.isArray(allNormalTabs) ? allNormalTabs : [];
 
       const countsByWindow = new Map();
       const orderedWindowIds = [];
-      for (const tab of state.rawTabs) {
+      for (const tab of state.allWindowsTabs) {
         if (!countsByWindow.has(tab.windowId)) {
           countsByWindow.set(tab.windowId, 0);
           orderedWindowIds.push(tab.windowId);
@@ -965,6 +1257,11 @@
       state.windowNumberMap = new Map(
         orderedWindowIds.map((wid, idx) => [wid, idx + 1])
       );
+
+      state.rawTabs =
+        state.scope === 'current' && typeof currentWinId === 'number'
+          ? state.allWindowsTabs.filter((t) => t.windowId === currentWinId)
+          : state.allWindowsTabs;
 
       rebuildGroupsFromRawTabs();
     } catch {
@@ -987,15 +1284,22 @@
 
     try {
       const orderedTabIds = getOrderedExtractionTabs(effectiveTabs).map((t) => t.id);
+      const targetWindowId =
+        state.features.windowTargetAndMerge && state.targetWindow !== 'new'
+          ? Number(state.targetWindow)
+          : null;
 
       const response = await chrome.runtime.sendMessage({
         type: 'EXTRACT_TABS',
-        tabIds: orderedTabIds
+        tabIds: orderedTabIds,
+        targetWindowId
       });
 
       if (response && response.ok) {
         showStatus(
-          `تم استخراج ${formatTabCount(response.moved, 'accusative')} إلى نافذة جديدة.`,
+          targetWindowId
+            ? `تم نقل ${formatTabCount(response.moved, 'accusative')} إلى النافذة المحددة.`
+            : `تم استخراج ${formatTabCount(response.moved, 'accusative')} إلى نافذة جديدة.`,
           false
         );
         window.close();
@@ -1004,7 +1308,7 @@
         await scanTabs();
       }
     } catch {
-      // Popup may close naturally as the new window receives focus
+      // Popup may close naturally as the target window receives focus
     } finally {
       state.busy = false;
       updateSummaryPreviewAndFooter(getVisibleEntries());
@@ -1056,6 +1360,35 @@
   }
 
   function bindEvents() {
+    // Settings Panel toggle
+    els.settingsBtn.addEventListener('click', () => {
+      state.settingsOpen = !state.settingsOpen;
+      syncFeatureVisibility();
+    });
+
+    // Feature checkboxes inside Settings Panel
+    for (const chk of els.featureCheckboxes) {
+      chk.addEventListener('change', async () => {
+        const fKey = chk.dataset.feature;
+        if (!fKey) return;
+        state.features[fKey] = chk.checked;
+        if (!state.features.quickFilters) {
+          state.activeFilters.clear();
+        }
+        if (!state.features.windowTargetAndMerge) {
+          state.targetWindow = 'new';
+        }
+        try {
+          await chrome.storage.local.set({
+            [STORAGE_KEYS.features]: state.features
+          });
+        } catch {
+          // Ignore storage error
+        }
+        renderList();
+      });
+    }
+
     for (const btn of els.viewButtons) {
       btn.addEventListener('click', async () => {
         const nextView = btn.dataset.view;
@@ -1065,7 +1398,7 @@
         try {
           await chrome.storage.local.set({ [STORAGE_KEYS.view]: nextView });
         } catch {
-          // Handle storage failure silently
+          // Ignore
         }
         renderList();
       });
@@ -1081,7 +1414,7 @@
         try {
           await chrome.storage.local.set({ [STORAGE_KEYS.scope]: nextScope });
         } catch {
-          // Handle storage failure silently
+          // Ignore
         }
         await scanTabs();
       });
@@ -1097,13 +1430,12 @@
         try {
           await chrome.storage.local.set({ [STORAGE_KEYS.grouping]: nextGrouping });
         } catch {
-          // Handle storage failure silently
+          // Ignore
         }
         rebuildGroupsFromRawTabs();
       });
     }
 
-    // Quick Filter Pills toggle
     for (const btn of els.filterButtons) {
       btn.addEventListener('click', () => {
         const filterKey = btn.dataset.filter;
@@ -1117,7 +1449,26 @@
         }
         renderList();
       });
+
+      // Double-click on "📑 مكرر" selects only excess duplicate copies
+      if (btn.dataset.filter === 'duplicated') {
+        btn.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          selectOnlyDuplicateCopies();
+        });
+      }
     }
+
+    els.cleanDuplicatesBtn.addEventListener('click', selectOnlyDuplicateCopies);
+
+    els.targetWindowSelect.addEventListener('change', () => {
+      state.targetWindow = els.targetWindowSelect.value;
+      updateSummaryPreviewAndFooter(getVisibleEntries());
+    });
+
+    els.mergeWindowsBtn.addEventListener('click', mergeOpenWindows);
+    els.groupTabsBtn.addEventListener('click', groupSelectedTabsInPlace);
+    els.hibernateTabsBtn.addEventListener('click', hibernateSelectedTabs);
 
     els.searchInput.addEventListener('input', () => {
       cancelCloseConfirmation();
@@ -1165,15 +1516,18 @@
     els.copyUrlsBtn.addEventListener('click', () => copySelectedTabs('urls'));
     els.copyMarkdownBtn.addEventListener('click', () => copySelectedTabs('markdown'));
 
-    // Keyboard shortcuts (Enter, Delete, Escape, and Ctrl+C / Cmd+C)
     document.addEventListener('keydown', (event) => {
       if (state.busy) return;
 
       const activeEl = document.activeElement;
       const inSearchInput = activeEl === els.searchInput;
 
-      // Handle Ctrl+C / Cmd+C to copy selected tab URLs when no text is highlighted
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'c') {
+      if (
+        state.features.copyTools &&
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'c'
+      ) {
         const hasTextSelection =
           (window.getSelection && String(window.getSelection()).length > 0) ||
           (inSearchInput && els.searchInput.selectionStart !== els.searchInput.selectionEnd);
@@ -1192,7 +1546,10 @@
 
       if (event.key === 'Enter') {
         const isOnButtonOrLink =
-          activeEl && (activeEl.tagName === 'BUTTON' || activeEl.tagName === 'A');
+          activeEl &&
+          (activeEl.tagName === 'BUTTON' ||
+            activeEl.tagName === 'A' ||
+            activeEl.tagName === 'SELECT');
         if (isOnButtonOrLink) return;
 
         const effectiveTabs = getEffectiveSelectedTabs(getVisibleEntries());
@@ -1208,10 +1565,16 @@
           event.preventDefault();
           handleCloseButtonClick();
         }
-      } else if (event.key === 'Escape' && state.confirmingClose) {
-        event.preventDefault();
-        cancelCloseConfirmation();
-        updateSummaryPreviewAndFooter(getVisibleEntries());
+      } else if (event.key === 'Escape') {
+        if (state.confirmingClose) {
+          event.preventDefault();
+          cancelCloseConfirmation();
+          updateSummaryPreviewAndFooter(getVisibleEntries());
+        } else if (state.settingsOpen) {
+          event.preventDefault();
+          state.settingsOpen = false;
+          syncFeatureVisibility();
+        }
       }
     });
   }
@@ -1221,7 +1584,8 @@
       const saved = await chrome.storage.local.get([
         STORAGE_KEYS.scope,
         STORAGE_KEYS.grouping,
-        STORAGE_KEYS.view
+        STORAGE_KEYS.view,
+        STORAGE_KEYS.features
       ]);
       if (saved[STORAGE_KEYS.scope] === 'all' || saved[STORAGE_KEYS.scope] === 'current') {
         state.scope = saved[STORAGE_KEYS.scope];
@@ -1232,8 +1596,14 @@
       if (saved[STORAGE_KEYS.view] === 'tiles' || saved[STORAGE_KEYS.view] === 'list') {
         state.view = saved[STORAGE_KEYS.view];
       }
+      if (saved[STORAGE_KEYS.features] && typeof saved[STORAGE_KEYS.features] === 'object') {
+        state.features = {
+          ...DEFAULT_FEATURES,
+          ...saved[STORAGE_KEYS.features]
+        };
+      }
     } catch {
-      // Handle storage failure silently and keep defaults
+      // Keep defaults on storage error
     }
 
     bindEvents();

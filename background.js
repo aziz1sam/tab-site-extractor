@@ -2,21 +2,13 @@
 
 /**
  * Background Service Worker
- * Executes tab extraction into a new window reliably even if the popup closes
- * when focus changes.
+ * Handles extracting tabs to a new window, moving tabs to an existing window,
+ * and merging all open normal windows into a single target window.
  */
 
-async function extractTabsToNewWindow(tabIds) {
-  if (!Array.isArray(tabIds) || tabIds.length === 0) {
-    return { ok: false, error: 'لم يتم تحديد أي تبويبات للنقل.' };
-  }
-
+async function fetchValidTabs(tabIds) {
+  if (!Array.isArray(tabIds) || tabIds.length === 0) return [];
   const uniqueIds = [...new Set(tabIds.filter((id) => typeof id === 'number'))];
-  if (uniqueIds.length === 0) {
-    return { ok: false, error: 'لم يتم تحديد أي تبويبات صالحة للنقل.' };
-  }
-
-  // Fetch all tab states in parallel instead of sequential IPC calls
   const settled = await Promise.allSettled(
     uniqueIds.map((id) => chrome.tabs.get(id))
   );
@@ -26,17 +18,80 @@ async function extractTabsToNewWindow(tabIds) {
     if (res.status === 'fulfilled' && res.value && typeof res.value.id === 'number') {
       validTabs.push({
         id: res.value.id,
+        windowId: res.value.windowId,
         pinned: Boolean(res.value.pinned),
         incognito: Boolean(res.value.incognito)
       });
     }
   }
+  return validTabs;
+}
 
+async function moveTabsToExistingWindow(validTabs, targetWindowId) {
+  let targetWin;
+  try {
+    targetWin = await chrome.windows.get(targetWindowId);
+  } catch {
+    return { ok: false, error: 'النافذة المستهدفة لم تعد متاحة.' };
+  }
+
+  const compatibleTabs = validTabs.filter(
+    (t) => t.incognito === Boolean(targetWin.incognito)
+  );
+  if (compatibleTabs.length === 0) {
+    return { ok: false, error: 'لا يمكن نقل التبويبات بين التصفح العادي والخفي.' };
+  }
+
+  let movedCount = 0;
+  const pinnedTabs = compatibleTabs.filter((t) => t.pinned);
+  const unpinnedTabs = compatibleTabs.filter((t) => !t.pinned);
+
+  for (const tab of pinnedTabs) {
+    try {
+      if (tab.windowId !== targetWindowId) {
+        await chrome.tabs.move(tab.id, { windowId: targetWindowId, index: -1 });
+      }
+      await chrome.tabs.update(tab.id, { pinned: true });
+      movedCount += 1;
+    } catch {
+      // Skip closed/unmovable tab
+    }
+  }
+
+  for (const tab of unpinnedTabs) {
+    try {
+      if (tab.windowId !== targetWindowId) {
+        await chrome.tabs.move(tab.id, { windowId: targetWindowId, index: -1 });
+      }
+      movedCount += 1;
+    } catch {
+      // Skip closed/unmovable tab
+    }
+  }
+
+  try {
+    await chrome.windows.update(targetWindowId, { focused: true });
+  } catch {
+    // Ignore focus error
+  }
+
+  return {
+    ok: true,
+    windowId: targetWindowId,
+    moved: movedCount
+  };
+}
+
+async function extractTabsToWindow(tabIds, targetWindowId) {
+  const validTabs = await fetchValidTabs(tabIds);
   if (validTabs.length === 0) {
     return { ok: false, error: 'لم تعد التبويبات المحددة متاحة.' };
   }
 
-  // Try creating the new window with the first available tab (fallback to next if closed concurrently)
+  if (typeof targetWindowId === 'number') {
+    return moveTabsToExistingWindow(validTabs, targetWindowId);
+  }
+
   let newWin = null;
   let firstTab = null;
   let startIndex = 0;
@@ -56,7 +111,7 @@ async function extractTabsToNewWindow(tabIds) {
         break;
       }
     } catch {
-      // Candidate tab closed or unmovable; try the next one
+      // Try next tab if candidate failed
     }
   }
 
@@ -70,11 +125,10 @@ async function extractTabsToNewWindow(tabIds) {
     try {
       await chrome.tabs.update(firstTab.id, { pinned: true });
     } catch {
-      // Ignore if tab closed concurrently
+      // Ignore
     }
   }
 
-  // Filter remaining tabs to match the target window's incognito mode
   const restTabs = validTabs
     .slice(startIndex)
     .filter((t) => t.incognito === firstTab.incognito);
@@ -84,27 +138,20 @@ async function extractTabsToNewWindow(tabIds) {
 
   for (const tab of restPinned) {
     try {
-      await chrome.tabs.move(tab.id, {
-        windowId: newWin.id,
-        index: -1
-      });
+      await chrome.tabs.move(tab.id, { windowId: newWin.id, index: -1 });
       await chrome.tabs.update(tab.id, { pinned: true });
       movedCount += 1;
     } catch {
-      // Skip tab if unmovable or closed
+      // Skip
     }
   }
 
   if (restUnpinned.length > 0) {
     const restUnpinnedIds = restUnpinned.map((t) => t.id);
     try {
-      await chrome.tabs.move(restUnpinnedIds, {
-        windowId: newWin.id,
-        index: -1
-      });
+      await chrome.tabs.move(restUnpinnedIds, { windowId: newWin.id, index: -1 });
       movedCount += restUnpinnedIds.length;
     } catch {
-      // Fallback: check which tabs weren't moved yet and move individually
       for (const id of restUnpinnedIds) {
         try {
           const currentTab = await chrome.tabs.get(id);
@@ -112,13 +159,10 @@ async function extractTabsToNewWindow(tabIds) {
             movedCount += 1;
             continue;
           }
-          await chrome.tabs.move(id, {
-            windowId: newWin.id,
-            index: -1
-          });
+          await chrome.tabs.move(id, { windowId: newWin.id, index: -1 });
           movedCount += 1;
         } catch {
-          // Skip unmovable tab
+          // Skip
         }
       }
     }
@@ -127,7 +171,7 @@ async function extractTabsToNewWindow(tabIds) {
   try {
     await chrome.windows.update(newWin.id, { focused: true });
   } catch {
-    // Ignore focus error
+    // Ignore
   }
 
   return {
@@ -137,21 +181,60 @@ async function extractTabsToNewWindow(tabIds) {
   };
 }
 
+async function mergeAllWindowsIntoTarget(targetWindowId) {
+  if (typeof targetWindowId !== 'number') {
+    return { ok: false, error: 'لم يتم تحديد النافذة المستهدفة للدمج.' };
+  }
+
+  let targetWin;
+  try {
+    targetWin = await chrome.windows.get(targetWindowId);
+  } catch {
+    return { ok: false, error: 'النافذة الحالية غير متاحة.' };
+  }
+
+  const allTabs = await chrome.tabs.query({ windowType: 'normal' });
+  const tabsToMove = allTabs.filter(
+    (t) =>
+      t.windowId !== targetWindowId &&
+      Boolean(t.incognito) === Boolean(targetWin.incognito)
+  );
+
+  if (tabsToMove.length === 0) {
+    return { ok: false, error: 'لا توجد نوافذ أخرى لدمجها.' };
+  }
+
+  return moveTabsToExistingWindow(tabsToMove, targetWindowId);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || message.type !== 'EXTRACT_TABS') {
+  if (!message || typeof message.type !== 'string') {
     return false;
   }
 
-  extractTabsToNewWindow(message.tabIds)
-    .then((result) => {
-      sendResponse(result);
-    })
-    .catch((err) => {
-      sendResponse({
-        ok: false,
-        error: err && err.message ? err.message : 'حدث خطأ أثناء نقل التبويبات.'
+  if (message.type === 'EXTRACT_TABS') {
+    extractTabsToWindow(message.tabIds, message.targetWindowId)
+      .then(sendResponse)
+      .catch((err) => {
+        sendResponse({
+          ok: false,
+          error: err && err.message ? err.message : 'حدث خطأ أثناء نقل التبويبات.'
+        });
       });
-    });
+    return true;
+  }
 
-  return true;
+  if (message.type === 'MERGE_WINDOWS') {
+    mergeAllWindowsIntoTarget(message.targetWindowId)
+      .then(sendResponse)
+      .catch((err) => {
+        sendResponse({
+          ok: false,
+          error: err && err.message ? err.message : 'حدث خطأ أثناء دمج النوافذ.'
+        });
+      });
+    return true;
+  }
+
+  return false;
 });

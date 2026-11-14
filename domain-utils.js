@@ -65,7 +65,7 @@
   function isIpOrLocalhost(hostname) {
     if (!hostname) return true;
     if (hostname === 'localhost') return true;
-    if (hostname.includes(':')) return true; // IPv6 (e.g. [::1] or ::1)
+    if (hostname.includes(':')) return true;
     return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
   }
 
@@ -159,11 +159,6 @@
     }
   }
 
-  /**
-   * Classify a tab object or URL string into a site group descriptor.
-   * @param {object|string} tabOrUrl
-   * @param {'main'|'subdomain'} groupingMode
-   */
   function classifyTab(tabOrUrl, groupingMode) {
     const mode = groupingMode === 'subdomain' ? 'subdomain' : 'main';
     const rawUrl =
@@ -225,17 +220,11 @@
     };
   }
 
-  /**
-   * Group tabs into sorted site entries and annotate duplicate/audible states.
-   * @param {Array<object>} rawTabs
-   * @param {'main'|'subdomain'} groupingMode
-   */
   function groupTabsBySite(rawTabs, groupingMode) {
     const mode = groupingMode === 'subdomain' ? 'subdomain' : 'main';
     const groupMap = new Map();
     const urlCounts = new Map();
 
-    // First pass: count normalized URLs to detect duplicates
     for (const tab of rawTabs) {
       if (!tab || typeof tab.id !== 'number') continue;
       const effectiveUrl = tab.pendingUrl || tab.url || '';
@@ -285,6 +274,7 @@
       const title = (tab.title || '').trim() || info.subLabel || 'تبويب بدون عنوان';
       const muted = Boolean(tab.mutedInfo && tab.mutedInfo.muted);
       const audible = Boolean(tab.audible);
+      const discarded = Boolean(tab.discarded);
 
       group.tabs.push({
         id: tab.id,
@@ -295,6 +285,7 @@
         pinned: Boolean(tab.pinned),
         audible,
         muted,
+        discarded,
         isDuplicate: hasDuplicates,
         isDuplicateCopy,
         windowId: tab.windowId,

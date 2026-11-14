@@ -15,15 +15,61 @@
           <span id="summaryText" class="summary-text">جاري الفحص...</span>
         </div>
 
-        <div class="segmented segmented-compact" role="group" aria-label="طريقة العرض">
-          <button type="button" class="seg-btn is-active" data-view="list" aria-pressed="true">
-            قائمة
-          </button>
-          <button type="button" class="seg-btn" data-view="tiles" aria-pressed="false">
-            بلاطات
+        <div class="topbar-actions">
+          <div class="segmented segmented-compact" role="group" aria-label="طريقة العرض">
+            <button type="button" class="seg-btn is-active" data-view="list" aria-pressed="true">
+              قائمة
+            </button>
+            <button type="button" class="seg-btn" data-view="tiles" aria-pressed="false">
+              بلاطات
+            </button>
+          </div>
+
+          <button
+            id="settingsBtn"
+            type="button"
+            class="icon-btn"
+            aria-expanded="false"
+            aria-label="إعدادات المميزات"
+            title="تخصيص وتفعيل المميزات"
+          >
+            ⚙️
           </button>
         </div>
       </div>
+
+      <!-- لوحة إعدادات تفعيل/إيقاف المميزات -->
+      <section id="settingsPanel" class="settings-panel" aria-label="إعدادات المميزات" hidden>
+        <div class="settings-head">
+          <span class="settings-title">تفعيل أو إيقاف المميزات</span>
+        </div>
+        <div class="settings-grid">
+          <label class="setting-item">
+            <input type="checkbox" class="chk" data-feature="quickFilters" checked>
+            <span>الفلاتر السريعة وتنظيف المكرر (📌/🔊/📑)</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" class="chk" data-feature="windowTargetAndMerge" checked>
+            <span>اختيار نافذة الوجهة وزر دمج النوافذ (🗗)</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" class="chk" data-feature="tabGroups" checked>
+            <span>تجميع داخل نفس النافذة (🗂️ Tab Groups)</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" class="chk" data-feature="hibernateTabs" checked>
+            <span>تجميد التبويبات لتحرير الذاكرة (❄️ RAM)</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" class="chk" data-feature="copyTools" checked>
+            <span>أزرار نسخ الروابط (🔗 URLs / Markdown)</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" class="chk" data-feature="livePreview" checked>
+            <span>شريط معاينة النافذة الجديدة</span>
+          </label>
+        </div>
+      </section>
 
       <div class="controls-strip">
         <div class="segmented" role="group" aria-label="نطاق التبويبات">
@@ -77,19 +123,28 @@
         </button>
       </div>
 
-      <!-- شريط الفلاتر السريعة (Quick Filter Pills) -->
-      <div class="filter-pills-row" role="group" aria-label="فلاتر سريعة">
+      <!-- شريط الفلاتر السريعة + زر تحديد النسخ الزائدة فقط -->
+      <div id="filterPillsRow" class="filter-pills-row" role="group" aria-label="فلاتر سريعة">
         <button type="button" class="filter-pill" data-filter="pinned" aria-pressed="false" title="عرض التبويبات المثبتة فقط (is:pinned)">
           <span>📌 مثبّت</span>
           <span id="countPinned" class="pill-count">0</span>
         </button>
-        <button type="button" class="filter-pill" data-filter="audible" aria-pressed="false" title="عرض التبويبات التي تصدر صوتاً (is:audible)">
+        <button type="button" class="filter-pill" data-filter="audible" aria-pressed="false" title="عرض التبويبات الصوتية (is:audible)">
           <span>🔊 صوت</span>
           <span id="countAudible" class="pill-count">0</span>
         </button>
-        <button type="button" class="filter-pill" data-filter="duplicated" aria-pressed="false" title="عرض التبويبات المكررة (is:duplicated)">
+        <button type="button" class="filter-pill" data-filter="duplicated" aria-pressed="false" title="عرض التبويبات المكررة (نقر مزدوج لتحديد الزائد فقط)">
           <span>📑 مكرر</span>
           <span id="countDuplicated" class="pill-count">0</span>
+        </button>
+        <button
+          id="cleanDuplicatesBtn"
+          type="button"
+          class="clean-dup-btn"
+          title="تحديد النسخ المكررة الزائدة فقط مع ترك النسخة الأصلية الأولى سليمة"
+          hidden
+        >
+          🧹 تحديد الزائد (<span id="countDuplicateCopies">0</span>)
         </button>
       </div>
     </header>
@@ -109,7 +164,7 @@
 
     <section id="previewStrip" class="preview-strip" aria-label="معاينة النافذة الجديدة" hidden>
       <div class="preview-head">
-        <span class="preview-title">معاينة النافذة الجديدة</span>
+        <span class="preview-title">معاينة التبويبات المحددة</span>
         <span id="previewMeta" class="preview-meta"></span>
       </div>
       <div id="previewTabs" class="preview-tabs" role="list"></div>
@@ -117,6 +172,23 @@
 
     <footer class="action-bar">
       <div id="windowWarning" class="window-warning" role="alert" hidden></div>
+
+      <!-- شريط وجهة النقل ودمج النوافذ -->
+      <div id="windowTargetRow" class="window-target-row">
+        <label class="target-label" for="targetWindowSelect">نقل إلى:</label>
+        <select id="targetWindowSelect" class="target-select" aria-label="وجهة نقل التبويبات">
+          <option value="new">نافذة جديدة مستقلة</option>
+        </select>
+        <button
+          id="mergeWindowsBtn"
+          type="button"
+          class="util-btn merge-btn"
+          title="دمج جميع النوافذ العادية المفتوحة في النافذة الحالية"
+          hidden
+        >
+          🗗 دمج النوافذ
+        </button>
+      </div>
 
       <div class="action-buttons">
         <button id="extractBtn" type="button" class="btn-extract" disabled>
@@ -128,19 +200,48 @@
       </div>
 
       <div class="utility-bar">
-        <div class="copy-actions">
-          <button id="copyUrlsBtn" type="button" class="util-btn" disabled title="نسخ روابط التبويبات المحددة (Ctrl+C)">
-            🔗 نسخ الروابط
+        <div class="smart-actions">
+          <button
+            id="groupTabsBtn"
+            type="button"
+            class="util-btn"
+            disabled
+            title="تجميع التبويبات المحددة في مجموعة كروم ملونة باسم الموقع داخل نفس النافذة"
+          >
+            🗂️ تجميع
           </button>
-          <button id="copyMarkdownBtn" type="button" class="util-btn" disabled title="نسخ الروابط بصيغة Markdown">
-            📝 Markdown
+          <button
+            id="hibernateTabsBtn"
+            type="button"
+            class="util-btn"
+            disabled
+            title="تجميد التبويبات المحددة لتحرير الذاكرة (RAM) مع إبقائها مفتوحة"
+          >
+            ❄️ تجميد
+          </button>
+          <button
+            id="copyUrlsBtn"
+            type="button"
+            class="util-btn"
+            disabled
+            title="نسخ روابط التبويبات المحددة (Ctrl+C)"
+          >
+            🔗 نسخ
+          </button>
+          <button
+            id="copyMarkdownBtn"
+            type="button"
+            class="util-btn"
+            disabled
+            title="نسخ الروابط بصيغة Markdown (Ctrl+Shift+C)"
+          >
+            📝 MD
           </button>
         </div>
 
         <div class="shortcuts-bar" aria-hidden="true">
-          <span><kbd class="kbd">Enter</kbd> استخراج</span>
+          <span><kbd class="kbd">Enter</kbd> نقل</span>
           <span><kbd class="kbd">Del</kbd> إغلاق</span>
-          <span><kbd class="kbd">Ctrl+C</kbd> نسخ</span>
         </div>
       </div>
     </footer>
