@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>مستخرج المواقع</title>
+  <title>فاصل التبويبات حسب الموقع</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <header class="topbar">
       <div class="topbar-head">
         <div class="title-group">
-          <h1 class="app-title">مستخرج المواقع</h1>
+          <h1 class="app-title">فاصل التبويبات</h1>
           <span id="summaryText" class="summary-text">جاري الفحص...</span>
         </div>
 
@@ -55,7 +55,7 @@
             id="searchInput"
             class="search-input"
             type="search"
-            placeholder="ابحث عن موقع أو عنوان"
+            placeholder="ابحث عن موقع أو عنوان (أو is:audible)"
             autocomplete="off"
             aria-label="ابحث عن موقع أو عنوان"
           >
@@ -76,6 +76,22 @@
           تحديد الكل
         </button>
       </div>
+
+      <!-- شريط الفلاتر السريعة (Quick Filter Pills) -->
+      <div class="filter-pills-row" role="group" aria-label="فلاتر سريعة">
+        <button type="button" class="filter-pill" data-filter="pinned" aria-pressed="false" title="عرض التبويبات المثبتة فقط (is:pinned)">
+          <span>📌 مثبّت</span>
+          <span id="countPinned" class="pill-count">0</span>
+        </button>
+        <button type="button" class="filter-pill" data-filter="audible" aria-pressed="false" title="عرض التبويبات التي تصدر صوتاً (is:audible)">
+          <span>🔊 صوت</span>
+          <span id="countAudible" class="pill-count">0</span>
+        </button>
+        <button type="button" class="filter-pill" data-filter="duplicated" aria-pressed="false" title="عرض التبويبات المكررة (is:duplicated)">
+          <span>📑 مكرر</span>
+          <span id="countDuplicated" class="pill-count">0</span>
+        </button>
+      </div>
     </header>
 
     <div id="statusBanner" class="status-banner" role="status" aria-live="polite" hidden></div>
@@ -86,7 +102,7 @@
       <div id="emptyState" class="empty-state" hidden>
         <p id="emptyMessage" class="empty-message"></p>
         <button id="emptyActionBtn" type="button" class="empty-action-btn" hidden>
-          مسح البحث
+          مسح البحث والفلاتر
         </button>
       </div>
     </main>
@@ -111,9 +127,21 @@
         </button>
       </div>
 
-      <div class="shortcuts-bar" aria-hidden="true">
-        <span><kbd class="kbd">Enter</kbd> استخراج</span>
-        <span><kbd class="kbd">Del</kbd> إغلاق المحدد</span>
+      <div class="utility-bar">
+        <div class="copy-actions">
+          <button id="copyUrlsBtn" type="button" class="util-btn" disabled title="نسخ روابط التبويبات المحددة (Ctrl+C)">
+            🔗 نسخ الروابط
+          </button>
+          <button id="copyMarkdownBtn" type="button" class="util-btn" disabled title="نسخ الروابط بصيغة Markdown">
+            📝 Markdown
+          </button>
+        </div>
+
+        <div class="shortcuts-bar" aria-hidden="true">
+          <span><kbd class="kbd">Enter</kbd> استخراج</span>
+          <span><kbd class="kbd">Del</kbd> إغلاق</span>
+          <span><kbd class="kbd">Ctrl+C</kbd> نسخ</span>
+        </div>
       </div>
     </footer>
   </div>

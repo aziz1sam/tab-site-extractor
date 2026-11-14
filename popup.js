@@ -30,6 +30,7 @@
     grouping: 'main',       // 'main' | 'subdomain'
     view: 'list',           // 'list' | 'tiles'
     searchQuery: '',
+    activeFilters: new Set(), // 'pinned' | 'audible' | 'duplicated'
     rawTabs: [],
     groups: [],
     currentWindowId: null,
@@ -48,6 +49,9 @@
     searchInput: document.getElementById('searchInput'),
     clearSearchBtn: document.getElementById('clearSearchBtn'),
     selectAllBtn: document.getElementById('selectAllBtn'),
+    countPinned: document.getElementById('countPinned'),
+    countAudible: document.getElementById('countAudible'),
+    countDuplicated: document.getElementById('countDuplicated'),
     statusBanner: document.getElementById('statusBanner'),
     siteListContainer: document.getElementById('siteListContainer'),
     siteList: document.getElementById('siteList'),
@@ -60,9 +64,12 @@
     windowWarning: document.getElementById('windowWarning'),
     extractBtn: document.getElementById('extractBtn'),
     closeTabsBtn: document.getElementById('closeTabsBtn'),
+    copyUrlsBtn: document.getElementById('copyUrlsBtn'),
+    copyMarkdownBtn: document.getElementById('copyMarkdownBtn'),
     viewButtons: Array.from(document.querySelectorAll('[data-view]')),
     scopeButtons: Array.from(document.querySelectorAll('[data-scope]')),
-    groupingButtons: Array.from(document.querySelectorAll('[data-grouping]'))
+    groupingButtons: Array.from(document.querySelectorAll('[data-grouping]')),
+    filterButtons: Array.from(document.querySelectorAll('[data-filter]'))
   };
 
   function formatTabCount(count, grammaticalCase) {
@@ -175,9 +182,46 @@
     return svg;
   }
 
+  /**
+   * Parse search query tokens (e.g., is:pinned, is:audible, is:duplicated)
+   * and merge with active filter pills.
+   */
+  function parseSearchAndFilters() {
+    const requiredFilters = new Set(state.activeFilters);
+    const rawTokens = state.searchQuery.trim().split(/\s+/).filter(Boolean);
+    const textTokens = [];
+
+    for (const token of rawTokens) {
+      const lower = token.toLowerCase();
+      if (lower === 'is:pinned') {
+        requiredFilters.add('pinned');
+      } else if (lower === 'is:audible' || lower === 'is:audio' || lower === 'is:muted') {
+        requiredFilters.add('audible');
+      } else if (lower === 'is:duplicated' || lower === 'is:duplicate') {
+        requiredFilters.add('duplicated');
+      } else {
+        textTokens.push(lower);
+      }
+    }
+
+    return {
+      textQuery: textTokens.join(' '),
+      requiredFilters
+    };
+  }
+
+  function matchesSmartFilters(tab, requiredFilters) {
+    if (requiredFilters.has('pinned') && !tab.pinned) return false;
+    if (requiredFilters.has('audible') && !(tab.audible || tab.muted)) return false;
+    if (requiredFilters.has('duplicated') && !tab.isDuplicate) return false;
+    return true;
+  }
+
   function getVisibleEntries() {
-    const q = state.searchQuery.trim().toLowerCase();
-    if (!q) {
+    const { textQuery, requiredFilters } = parseSearchAndFilters();
+    const hasFilters = requiredFilters.size > 0;
+
+    if (!textQuery && !hasFilters) {
       return state.groups.map((group) => ({
         group,
         visibleTabs: group.tabs
@@ -186,18 +230,19 @@
 
     const entries = [];
     for (const group of state.groups) {
-      const groupNameMatches = group.displayName.toLowerCase().includes(q);
-      if (groupNameMatches) {
-        entries.push({ group, visibleTabs: group.tabs });
-        continue;
-      }
+      const groupNameMatches = textQuery
+        ? group.displayName.toLowerCase().includes(textQuery)
+        : true;
 
-      const matchingTabs = group.tabs.filter(
-        (tab) =>
-          tab.title.toLowerCase().includes(q) ||
-          tab.url.toLowerCase().includes(q) ||
-          tab.subLabel.toLowerCase().includes(q)
-      );
+      const matchingTabs = group.tabs.filter((tab) => {
+        if (!matchesSmartFilters(tab, requiredFilters)) return false;
+        if (!textQuery || groupNameMatches) return true;
+        return (
+          tab.title.toLowerCase().includes(textQuery) ||
+          tab.url.toLowerCase().includes(textQuery) ||
+          tab.subLabel.toLowerCase().includes(textQuery)
+        );
+      });
 
       if (matchingTabs.length > 0) {
         entries.push({ group, visibleTabs: matchingTabs });
@@ -206,10 +251,6 @@
     return entries;
   }
 
-  /**
-   * Effective selection = selected ∩ visible.
-   * Ensures preview, counts, and footer actions operate only on visible items.
-   */
   function getEffectiveSelectedTabs(visibleEntries) {
     const selected = [];
     for (const entry of visibleEntries) {
@@ -257,6 +298,24 @@
     return { closesCurrentWindow, closesAnyWindow };
   }
 
+  function updateFilterPillCounts() {
+    let pinned = 0;
+    let audible = 0;
+    let duplicated = 0;
+
+    for (const group of state.groups) {
+      for (const tab of group.tabs) {
+        if (tab.pinned) pinned += 1;
+        if (tab.audible || tab.muted) audible += 1;
+        if (tab.isDuplicate) duplicated += 1;
+      }
+    }
+
+    if (els.countPinned) els.countPinned.textContent = String(pinned);
+    if (els.countAudible) els.countAudible.textContent = String(audible);
+    if (els.countDuplicated) els.countDuplicated.textContent = String(duplicated);
+  }
+
   function syncHeaderControls() {
     for (const btn of els.viewButtons) {
       const active = btn.dataset.view === state.view;
@@ -273,7 +332,14 @@
       btn.classList.toggle('is-active', active);
       btn.setAttribute('aria-pressed', String(active));
     }
+    for (const btn of els.filterButtons) {
+      const fKey = btn.dataset.filter;
+      const active = state.activeFilters.has(fKey);
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    }
     els.clearSearchBtn.hidden = state.searchQuery.length === 0;
+    updateFilterPillCounts();
   }
 
   function renderPreviewStrip(effectiveTabs) {
@@ -334,7 +400,6 @@
     const totalSites = state.groups.length;
     const totalTabs = state.groups.reduce((sum, g) => sum + g.tabs.length, 0);
 
-    // Pre-filter total summary in the header
     els.summaryText.textContent =
       totalTabs === 0
         ? 'لا توجد تبويبات'
@@ -360,6 +425,8 @@
       els.closeTabsBtn.disabled = true;
       els.closeTabsBtn.classList.remove('is-confirming');
       els.closeTabsBtn.textContent = 'إغلاق المحدد (0)';
+      els.copyUrlsBtn.disabled = true;
+      els.copyMarkdownBtn.disabled = true;
       els.windowWarning.hidden = true;
       els.windowWarning.textContent = '';
       return;
@@ -368,6 +435,8 @@
     els.extractBtn.disabled = state.busy;
     els.extractBtn.textContent = `استخراج في نافذة جديدة (${effectiveCount})`;
     els.closeTabsBtn.disabled = state.busy;
+    els.copyUrlsBtn.disabled = state.busy;
+    els.copyMarkdownBtn.disabled = state.busy;
 
     const closure = detectFullWindowClosure(effectiveTabs);
 
@@ -394,16 +463,77 @@
 
       if (closure.closesCurrentWindow) {
         els.windowWarning.textContent =
-          'تنبيه: التحديد يشمل كل تبويبات النافذة الحالية؛ تنفيذ الاستخراج أو الإغلاق سيغلق هذه النافذة وتختفي الإضافة (الاستعادة بـ Ctrl+Shift+T).';
+          'تنبيه: التحديد يشمل كل تبويبات النافذة الحالية؛ نقلها أو إغلاقها سيؤدي إلى إغلاق النافذة الحالية.';
         els.windowWarning.hidden = false;
       } else if (closure.closesAnyWindow) {
         els.windowWarning.textContent =
-          'تنبيه: التحديد يشمل كل تبويبات إحدى النوافذ المفتوحة؛ تنفيذ الإجراء سيغلق تلك النافذة (الاستعادة بـ Ctrl+Shift+T).';
+          'تنبيه: التحديد يشمل كل تبويبات إحدى النوافذ المفتوحة؛ تنفيذ الإجراء سيغلق تلك النافذة.';
         els.windowWarning.hidden = false;
       } else {
         els.windowWarning.hidden = true;
         els.windowWarning.textContent = '';
       }
+    }
+  }
+
+  /**
+   * Feature 3A: Jump directly to a tab and focus its window
+   */
+  async function jumpToTab(tab) {
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      if (typeof tab.windowId === 'number') {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      }
+      window.close();
+    } catch {
+      showStatus('تعذر الانتقال إلى التبويب المحدد.', true);
+    }
+  }
+
+  /**
+   * Feature 3B: Mute / Unmute an audible tab directly from the drawer
+   */
+  async function toggleMuteTab(tab) {
+    try {
+      const nextMuted = !tab.muted;
+      await chrome.tabs.update(tab.id, { muted: nextMuted });
+      await scanTabs();
+      showStatus(nextMuted ? 'تم كتم صوت التبويب.' : 'تم إلغاء كتم صوت التبويب.', false);
+    } catch {
+      showStatus('تعذر تغيير حالة الصوت للتبويب.', true);
+    }
+  }
+
+  /**
+   * Feature 5: Copy selected URLs as Plain Text or Markdown
+   */
+  async function copySelectedTabs(format) {
+    const visibleEntries = getVisibleEntries();
+    const effectiveTabs = getEffectiveSelectedTabs(visibleEntries);
+    if (effectiveTabs.length === 0) return;
+
+    const ordered = getOrderedExtractionTabs(effectiveTabs);
+    const lines = ordered.map((tab) => {
+      const url = tab.url || '';
+      if (format === 'markdown') {
+        const safeTitle = (tab.title || url).replace(/[\[\]]/g, '\\$&');
+        return `- [${safeTitle}](${url})`;
+      }
+      return url;
+    });
+
+    const textToCopy = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      showStatus(
+        format === 'markdown'
+          ? `تم نسخ ${formatTabCount(ordered.length, 'accusative')} بصيغة Markdown.`
+          : `تم نسخ روابط ${formatTabCount(ordered.length, 'accusative')} إلى الحافظة.`,
+        false
+      );
+    } catch {
+      showStatus('تعذر النسخ إلى الحافظة.', true);
     }
   }
 
@@ -506,6 +636,7 @@
       const partialSelected =
         selectedInVisible > 0 && selectedInVisible < visibleTabs.length;
       const isExpanded = state.expandedGroupKeys.has(group.key);
+      const hasAudibleInGroup = visibleTabs.some((t) => t.audible);
 
       const row = document.createElement('div');
       row.className = 'site-row';
@@ -552,6 +683,17 @@
       nameSpan.textContent = group.displayName;
       nameSpan.title = group.displayName;
 
+      const badgesWrap = document.createElement('span');
+      badgesWrap.className = 'site-badges';
+
+      if (hasAudibleInGroup) {
+        const audioInd = document.createElement('span');
+        audioInd.className = 'site-audio-indicator';
+        audioInd.textContent = '🔊';
+        audioInd.title = 'يحتوي على تبويب يصدر صوتاً';
+        badgesWrap.appendChild(audioInd);
+      }
+
       const countSpan = document.createElement('span');
       countSpan.className = 'tab-count-badge';
       if (visibleTabs.length !== group.tabs.length) {
@@ -562,7 +704,8 @@
         countSpan.textContent = String(group.tabs.length);
       }
 
-      meta.append(nameSpan, countSpan);
+      badgesWrap.appendChild(countSpan);
+      meta.append(nameSpan, badgesWrap);
       label.append(checkbox, iconWrap, meta);
 
       const expandBtn = document.createElement('button');
@@ -595,6 +738,8 @@
 
         for (const tab of visibleTabs) {
           const subLi = document.createElement('li');
+          subLi.className = 'tab-item-row';
+
           const tabLabel = document.createElement('label');
           tabLabel.className = 'tab-item-label';
           tabLabel.title = tab.url ? `${tab.title}\n${tab.url}` : tab.title;
@@ -622,7 +767,7 @@
 
           tabLabel.append(tabChk, titleSpan);
 
-          if (tab.pinned || state.scope === 'all') {
+          if (tab.pinned || tab.isDuplicate || state.scope === 'all') {
             const tags = document.createElement('span');
             tags.className = 'tab-tags';
 
@@ -631,6 +776,13 @@
               pinTag.className = 'tab-tag is-accent';
               pinTag.textContent = 'مثبّت';
               tags.appendChild(pinTag);
+            }
+
+            if (tab.isDuplicate) {
+              const dupTag = document.createElement('span');
+              dupTag.className = 'tab-tag';
+              dupTag.textContent = 'مكرر';
+              tags.appendChild(dupTag);
             }
 
             if (state.scope === 'all') {
@@ -654,7 +806,39 @@
             }
           }
 
-          subLi.appendChild(tabLabel);
+          // Quick Actions container (Audio Mute/Unmute + Instant Jump)
+          const actionsWrap = document.createElement('div');
+          actionsWrap.className = 'tab-quick-actions';
+
+          if (tab.audible || tab.muted) {
+            const audioBtn = document.createElement('button');
+            audioBtn.type = 'button';
+            audioBtn.className = tab.muted
+              ? 'tab-action-btn is-audio is-muted'
+              : 'tab-action-btn is-audio';
+            audioBtn.textContent = tab.muted ? '🔇' : '🔊';
+            audioBtn.title = tab.muted ? 'إلغاء كتم الصوت' : 'كتم صوت هذا التبويب';
+            audioBtn.setAttribute('aria-label', audioBtn.title);
+            audioBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              toggleMuteTab(tab);
+            });
+            actionsWrap.appendChild(audioBtn);
+          }
+
+          const jumpBtn = document.createElement('button');
+          jumpBtn.type = 'button';
+          jumpBtn.className = 'tab-action-btn is-jump';
+          jumpBtn.textContent = '↗';
+          jumpBtn.title = 'الانتقال الفوري إلى هذا التبويب';
+          jumpBtn.setAttribute('aria-label', 'الانتقال الفوري إلى هذا التبويب');
+          jumpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            jumpToTab(tab);
+          });
+          actionsWrap.appendChild(jumpBtn);
+
+          subLi.append(tabLabel, actionsWrap);
           subList.appendChild(subLi);
         }
 
@@ -684,8 +868,8 @@
     if (visibleEntries.length === 0) {
       els.siteList.classList.remove('is-tiles');
       els.emptyState.hidden = false;
-      if (state.searchQuery.trim()) {
-        els.emptyMessage.textContent = 'لا نتائج للبحث';
+      if (state.searchQuery.trim() || state.activeFilters.size > 0) {
+        els.emptyMessage.textContent = 'لا توجد تبويبات تطابق البحث أو الفلتر';
         els.emptyActionBtn.hidden = false;
       } else {
         els.emptyMessage.textContent = 'لا توجد تبويبات';
@@ -919,6 +1103,22 @@
       });
     }
 
+    // Quick Filter Pills toggle
+    for (const btn of els.filterButtons) {
+      btn.addEventListener('click', () => {
+        const filterKey = btn.dataset.filter;
+        if (!filterKey) return;
+        cancelCloseConfirmation();
+        showStatus('');
+        if (state.activeFilters.has(filterKey)) {
+          state.activeFilters.delete(filterKey);
+        } else {
+          state.activeFilters.add(filterKey);
+        }
+        renderList();
+      });
+    }
+
     els.searchInput.addEventListener('input', () => {
       cancelCloseConfirmation();
       showStatus('');
@@ -937,6 +1137,7 @@
     els.emptyActionBtn.addEventListener('click', () => {
       cancelCloseConfirmation();
       state.searchQuery = '';
+      state.activeFilters.clear();
       els.searchInput.value = '';
       els.searchInput.focus();
       renderList();
@@ -961,13 +1162,33 @@
 
     els.extractBtn.addEventListener('click', extractSelectedTabs);
     els.closeTabsBtn.addEventListener('click', handleCloseButtonClick);
+    els.copyUrlsBtn.addEventListener('click', () => copySelectedTabs('urls'));
+    els.copyMarkdownBtn.addEventListener('click', () => copySelectedTabs('markdown'));
 
-    // Keyboard shortcuts from Proposal D (safe around buttons and search editing)
+    // Keyboard shortcuts (Enter, Delete, Escape, and Ctrl+C / Cmd+C)
     document.addEventListener('keydown', (event) => {
-      if (state.busy || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (state.busy) return;
 
       const activeEl = document.activeElement;
       const inSearchInput = activeEl === els.searchInput;
+
+      // Handle Ctrl+C / Cmd+C to copy selected tab URLs when no text is highlighted
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'c') {
+        const hasTextSelection =
+          (window.getSelection && String(window.getSelection()).length > 0) ||
+          (inSearchInput && els.searchInput.selectionStart !== els.searchInput.selectionEnd);
+
+        if (!hasTextSelection) {
+          const effectiveTabs = getEffectiveSelectedTabs(getVisibleEntries());
+          if (effectiveTabs.length > 0) {
+            event.preventDefault();
+            copySelectedTabs(event.shiftKey ? 'markdown' : 'urls');
+          }
+        }
+        return;
+      }
+
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
 
       if (event.key === 'Enter') {
         const isOnButtonOrLink =
@@ -980,7 +1201,7 @@
           extractSelectedTabs();
         }
       } else if (event.key === 'Delete') {
-        if (inSearchInput) return;
+        if (inSearchInput && els.searchInput.value.length > 0) return;
 
         const effectiveTabs = getEffectiveSelectedTabs(getVisibleEntries());
         if (effectiveTabs.length > 0) {

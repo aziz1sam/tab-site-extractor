@@ -119,6 +119,37 @@ function runTests() {
   assert.equal(grouped[2].key, INTERNAL_GROUP_KEY);
   assert.equal(grouped[2].tabs.length, 2);
 
+  // 8. New: Deduplication & Audio state tests
+  const { normalizeUrlForDedupe } = DomainUtils;
+  assert.equal(normalizeUrlForDedupe('https://example.com/path/#heading'), 'https://example.com/path');
+  assert.equal(normalizeUrlForDedupe('https://example.com/path/'), 'https://example.com/path');
+
+  const dedupeGrouped = groupTabsBySite(
+    [
+      { id: 10, url: 'https://example.com/article#intro', windowId: 1, index: 0, audible: true },
+      { id: 11, url: 'https://example.com/article/', windowId: 1, index: 1, mutedInfo: { muted: true } },
+      { id: 12, url: 'https://example.com/other', windowId: 1, index: 2 }
+    ],
+    'main'
+  );
+
+  const exTabs = dedupeGrouped[0].tabs;
+  assert.equal(exTabs[0].isDuplicate, true);
+  assert.equal(exTabs[0].isDuplicateCopy, false);
+  assert.equal(exTabs[0].audible, true);
+  assert.equal(exTabs[0].muted, false);
+
+  assert.equal(exTabs[1].isDuplicate, true);
+  assert.equal(exTabs[1].isDuplicateCopy, true);
+  assert.equal(exTabs[1].muted, true);
+
+  assert.equal(exTabs[2].isDuplicate, false);
+  assert.equal(exTabs[2].isDuplicateCopy, false);
+
+  // 9. New hosting platforms
+  assert.equal(classifyTab('https://my-app.fly.dev', 'main').displayName, 'my-app.fly.dev');
+  assert.equal(classifyTab('https://worker.deno.dev', 'main').displayName, 'worker.deno.dev');
+
   console.log('All domain-utils tests passed successfully!');
 }
 

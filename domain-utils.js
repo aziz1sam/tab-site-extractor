@@ -22,7 +22,8 @@
   ]);
 
   const COUNTRY_SECOND_LEVEL_LABELS = new Set([
-    'co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'mil', 'sch', 'ne', 'or', 'go'
+    'co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'mil', 'sch', 'ne', 'or', 'go',
+    'med', 'nom', 'ind', 'id', 'lg'
   ]);
 
   const HOSTING_PLATFORM_SUFFIXES = new Set([
@@ -39,7 +40,17 @@
     'appspot.com',
     'onrender.com',
     'azurewebsites.net',
-    'wordpress.com'
+    'wordpress.com',
+    'fly.dev',
+    'railway.app',
+    'deno.dev',
+    'surge.sh',
+    'glitch.me',
+    'ngrok-free.app',
+    'ngrok.io',
+    'trycloudflare.com',
+    'myshopify.com',
+    'wixsite.com'
   ]);
 
   function isSafeImageUrl(url) {
@@ -68,16 +79,24 @@
   function stripLeadingWww(hostname) {
     const parts = hostname.split('.');
     if (hostname.startsWith('www.') && parts.length > 2) {
+      if (
+        parts.length === 3 &&
+        parts[2].length === 2 &&
+        COUNTRY_SECOND_LEVEL_LABELS.has(parts[1])
+      ) {
+        return hostname;
+      }
       return hostname.slice(4);
     }
     return hostname;
   }
 
-  function extractMainDomain(cleanHost) {
-    if (isIpOrLocalhost(cleanHost)) {
-      return normalizeIpv6Host(cleanHost);
+  function extractMainDomain(rawCleanHost) {
+    if (isIpOrLocalhost(rawCleanHost)) {
+      return normalizeIpv6Host(rawCleanHost);
     }
 
+    const cleanHost = stripLeadingWww(rawCleanHost.toLowerCase().replace(/\.$/, ''));
     const parts = cleanHost.split('.').filter(Boolean);
     if (parts.length <= 2) {
       return cleanHost;
@@ -111,10 +130,33 @@
     if (parsed.protocol === 'about:') {
       return `about:${parsed.pathname || 'blank'}`;
     }
+    if (parsed.protocol === 'view-source:' || parsed.protocol === 'blob:') {
+      try {
+        const inner = new URL(parsed.pathname);
+        if (inner.hostname) return `${parsed.protocol}${inner.hostname}`;
+      } catch {
+        // Fallback below
+      }
+    }
     if (parsed.hostname) {
       return `${parsed.protocol}//${parsed.hostname}`;
     }
     return parsed.protocol || 'صفحة نظام';
+  }
+
+  function normalizeUrlForDedupe(rawUrl) {
+    const trimmed = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+    if (!trimmed) return '';
+    try {
+      const parsed = new URL(trimmed);
+      parsed.hash = '';
+      if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+        parsed.pathname = parsed.pathname.slice(0, -1);
+      }
+      return parsed.toString();
+    } catch {
+      return trimmed;
+    }
   }
 
   /**
@@ -184,17 +226,42 @@
   }
 
   /**
-   * Group tabs into sorted site entries.
+   * Group tabs into sorted site entries and annotate duplicate/audible states.
    * @param {Array<object>} rawTabs
    * @param {'main'|'subdomain'} groupingMode
    */
   function groupTabsBySite(rawTabs, groupingMode) {
     const mode = groupingMode === 'subdomain' ? 'subdomain' : 'main';
     const groupMap = new Map();
+    const urlCounts = new Map();
+
+    // First pass: count normalized URLs to detect duplicates
+    for (const tab of rawTabs) {
+      if (!tab || typeof tab.id !== 'number') continue;
+      const effectiveUrl = tab.pendingUrl || tab.url || '';
+      const normUrl = normalizeUrlForDedupe(effectiveUrl);
+      if (normUrl) {
+        urlCounts.set(normUrl, (urlCounts.get(normUrl) || 0) + 1);
+      }
+    }
+
+    const seenFirstInstance = new Set();
 
     for (const tab of rawTabs) {
       if (!tab || typeof tab.id !== 'number') continue;
       const effectiveUrl = tab.pendingUrl || tab.url || '';
+      const normUrl = normalizeUrlForDedupe(effectiveUrl);
+      const hasDuplicates = Boolean(normUrl && (urlCounts.get(normUrl) || 0) > 1);
+      let isDuplicateCopy = false;
+
+      if (hasDuplicates) {
+        if (seenFirstInstance.has(normUrl)) {
+          isDuplicateCopy = true;
+        } else {
+          seenFirstInstance.add(normUrl);
+        }
+      }
+
       const info = classifyTab(effectiveUrl, mode);
       const safeIcon = !info.isInternal && isSafeImageUrl(tab.favIconUrl)
         ? tab.favIconUrl
@@ -216,6 +283,8 @@
       }
 
       const title = (tab.title || '').trim() || info.subLabel || 'تبويب بدون عنوان';
+      const muted = Boolean(tab.mutedInfo && tab.mutedInfo.muted);
+      const audible = Boolean(tab.audible);
 
       group.tabs.push({
         id: tab.id,
@@ -224,6 +293,10 @@
         subLabel: info.subLabel,
         favIconUrl: safeIcon,
         pinned: Boolean(tab.pinned),
+        audible,
+        muted,
+        isDuplicate: hasDuplicates,
+        isDuplicateCopy,
         windowId: tab.windowId,
         index: tab.index,
         active: Boolean(tab.active),
@@ -256,6 +329,7 @@
     INTERNAL_GROUP_LABEL,
     isSafeImageUrl,
     extractMainDomain,
+    normalizeUrlForDedupe,
     classifyTab,
     groupTabsBySite
   };
