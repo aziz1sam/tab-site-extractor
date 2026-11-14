@@ -11,19 +11,24 @@ async function extractTabsToNewWindow(tabIds) {
     return { ok: false, error: 'لم يتم تحديد أي تبويبات للنقل.' };
   }
 
+  const uniqueIds = [...new Set(tabIds.filter((id) => typeof id === 'number'))];
+  if (uniqueIds.length === 0) {
+    return { ok: false, error: 'لم يتم تحديد أي تبويبات صالحة للنقل.' };
+  }
+
+  // Fetch all tab states in parallel instead of sequential IPC calls
+  const settled = await Promise.allSettled(
+    uniqueIds.map((id) => chrome.tabs.get(id))
+  );
+
   const validTabs = [];
-  for (const rawId of tabIds) {
-    if (typeof rawId !== 'number') continue;
-    try {
-      const tab = await chrome.tabs.get(rawId);
-      if (tab && typeof tab.id === 'number') {
-        validTabs.push({
-          id: tab.id,
-          pinned: Boolean(tab.pinned)
-        });
-      }
-    } catch {
-      // Ignore tabs closed or unavailable before extraction
+  for (const res of settled) {
+    if (res.status === 'fulfilled' && res.value && typeof res.value.id === 'number') {
+      validTabs.push({
+        id: res.value.id,
+        pinned: Boolean(res.value.pinned),
+        incognito: Boolean(res.value.incognito)
+      });
     }
   }
 
@@ -31,16 +36,31 @@ async function extractTabsToNewWindow(tabIds) {
     return { ok: false, error: 'لم تعد التبويبات المحددة متاحة.' };
   }
 
-  const firstTab = validTabs[0];
-  const restTabs = validTabs.slice(1);
+  // Try creating the new window with the first available tab (fallback to next if closed concurrently)
+  let newWin = null;
+  let firstTab = null;
+  let startIndex = 0;
 
-  // Create the new window unfocused first so the popup stays alive while moving
-  const newWin = await chrome.windows.create({
-    tabId: firstTab.id,
-    focused: false
-  });
+  for (let i = 0; i < validTabs.length; i += 1) {
+    const candidate = validTabs[i];
+    try {
+      const created = await chrome.windows.create({
+        tabId: candidate.id,
+        incognito: candidate.incognito,
+        focused: false
+      });
+      if (created && typeof created.id === 'number') {
+        newWin = created;
+        firstTab = candidate;
+        startIndex = i + 1;
+        break;
+      }
+    } catch {
+      // Candidate tab closed or unmovable; try the next one
+    }
+  }
 
-  if (!newWin || typeof newWin.id !== 'number') {
+  if (!newWin || !firstTab) {
     return { ok: false, error: 'تعذر إنشاء النافذة الجديدة.' };
   }
 
@@ -54,7 +74,11 @@ async function extractTabsToNewWindow(tabIds) {
     }
   }
 
-  // Move remaining pinned tabs first, re-pinning sequentially to preserve order
+  // Filter remaining tabs to match the target window's incognito mode
+  const restTabs = validTabs
+    .slice(startIndex)
+    .filter((t) => t.incognito === firstTab.incognito);
+
   const restPinned = restTabs.filter((t) => t.pinned);
   const restUnpinned = restTabs.filter((t) => !t.pinned);
 
@@ -80,9 +104,14 @@ async function extractTabsToNewWindow(tabIds) {
       });
       movedCount += restUnpinnedIds.length;
     } catch {
-      // Fallback: move individually if any single tab fails
+      // Fallback: check which tabs weren't moved yet and move individually
       for (const id of restUnpinnedIds) {
         try {
+          const currentTab = await chrome.tabs.get(id);
+          if (currentTab && currentTab.windowId === newWin.id) {
+            movedCount += 1;
+            continue;
+          }
           await chrome.tabs.move(id, {
             windowId: newWin.id,
             index: -1
